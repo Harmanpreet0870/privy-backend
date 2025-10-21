@@ -1,6 +1,4 @@
 // File: backend/index.js
-// REPLACE your entire index.js with this:
-
 import express from "express";
 import http from "http";
 import { Server } from "socket.io";
@@ -19,21 +17,31 @@ import messageRoutes from "./routes/messageRoutes.js";
 const app = express();
 const server = http.createServer(app);
 
+// Allowed origins for Socket.io and CORS
+const allowedOrigins = [
+  "http://localhost:5173",
+  "http://localhost:3000",
+  "http://localhost:3001",
+  process.env.CLIENT_URL, // Your live Netlify frontend
+];
+
 // Socket.io setup with CORS
 const io = new Server(server, {
   cors: {
-    origin: [
-      "http://localhost:5173",
-      "http://localhost:3000", 
-      "http://localhost:3001"
-    ],
+    origin: function (origin, callback) {
+      if (!origin || allowedOrigins.includes(origin)) {
+        callback(null, true);
+      } else {
+        callback(new Error("Not allowed by CORS"));
+      }
+    },
     methods: ["GET", "POST"],
     credentials: true,
   },
 });
 
-// ⚠️ MIDDLEWARE MUST COME FIRST - BEFORE ROUTES
-app.use(cors());
+// Middleware
+app.use(cors({ origin: process.env.CLIENT_URL || "*" }));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
@@ -42,7 +50,7 @@ app.get("/", (req, res) => {
   res.json({ message: "Chat App API is running" });
 });
 
-// API Routes - AFTER middleware
+// API Routes
 app.use("/api/auth", authRoutes);
 app.use("/api/chats", chatRoutes);
 app.use("/api/messages", messageRoutes);
@@ -54,64 +62,45 @@ const activeUsers = new Map();
 io.on("connection", (socket) => {
   console.log("✅ User connected:", socket.id);
 
-  // User joins with their userId
+  // User comes online
   socket.on("user-online", (userId) => {
     activeUsers.set(userId, socket.id);
-    console.log(`👤 User ${userId} is online with socket ${socket.id}`);
-    
-    // Broadcast online status to all users
     io.emit("user-status-change", { userId, status: "online" });
+    console.log(`👤 User ${userId} is online`);
   });
 
-  // User joins a specific chat room
+  // Join / leave chat rooms
   socket.on("join-chat", (chatId) => {
     socket.join(chatId);
     console.log(`💬 Socket ${socket.id} joined chat ${chatId}`);
   });
-
-  // User leaves a chat room
   socket.on("leave-chat", (chatId) => {
     socket.leave(chatId);
     console.log(`👋 Socket ${socket.id} left chat ${chatId}`);
   });
 
-  // Handle new message event - FIXED
-  socket.on("send-message", (data) => {
-    const { chatId, message } = data;
-    
-    if (!chatId || !message) {
-      console.error("❌ Invalid message data:", data);
-      return;
-    }
-    
-    // Ensure chatId is in the message
-    const messageWithChatId = { ...message, chatId };
-    
-    // Broadcast to everyone in the room INCLUDING sender
-    io.in(chatId).emit("receive-message", messageWithChatId);
-    
-    console.log(`📨 Message broadcast to chat ${chatId}:`, message._id || "new");
+  // Handle messages
+  socket.on("send-message", ({ chatId, message }) => {
+    if (!chatId || !message) return;
+    io.in(chatId).emit("receive-message", { ...message, chatId });
+    console.log(`📨 Message broadcast to chat ${chatId}`);
   });
 
-  // Handle typing indicator
+  // Typing indicators
   socket.on("typing", ({ chatId, userId, username }) => {
     socket.to(chatId).emit("user-typing", { userId, username });
   });
-
   socket.on("stop-typing", ({ chatId, userId }) => {
     socket.to(chatId).emit("user-stop-typing", { userId });
   });
 
-  // Handle message seen/read
+  // Mark messages as seen
   socket.on("mark-as-seen", ({ chatId, messageId, userId }) => {
     socket.to(chatId).emit("message-seen", { messageId, userId });
   });
 
-  // Handle disconnection
+  // Disconnect
   socket.on("disconnect", () => {
-    console.log("❌ User disconnected:", socket.id);
-    
-    // Find and remove user from activeUsers
     for (const [userId, socketId] of activeUsers.entries()) {
       if (socketId === socket.id) {
         activeUsers.delete(userId);
@@ -120,21 +109,20 @@ io.on("connection", (socket) => {
         break;
       }
     }
+    console.log("❌ User disconnected:", socket.id);
   });
 });
 
-// Make io accessible in routes (optional)
+// Make io accessible in routes if needed
 app.set("io", io);
 
 // Connect to MongoDB
-const MONGO_URI = process.env.MONGO_URI;
-if (!MONGO_URI) {
-  console.error("❌ MONGO_URI is not defined in .env file");
+if (!process.env.MONGO_URI) {
+  console.error("❌ MONGO_URI is not defined in .env");
   process.exit(1);
 }
-
 mongoose
-  .connect(MONGO_URI)
+  .connect(process.env.MONGO_URI)
   .then(() => console.log("✅ MongoDB connected successfully"))
   .catch((err) => {
     console.error("❌ MongoDB connection error:", err);
