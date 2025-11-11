@@ -19,35 +19,48 @@ const server = http.createServer(app);
 
 // Allowed origins for Socket.io and CORS
 const allowedOrigins = [
-  "http://localhost:5173",
-  "http://localhost:3000",
-  "http://localhost:3001",
-  process.env.CLIENT_URL, // Your live Netlify frontend
+  
+  process.env.CLIENT_URL // Netlify Live URL
 ];
 
-// Socket.io setup with CORS
-const io = new Server(server, {
-  cors: {
+// ✅ CORS for REST API
+app.use(
+  cors({
     origin: function (origin, callback) {
       if (!origin || allowedOrigins.includes(origin)) {
         callback(null, true);
       } else {
+        console.log("❌ Blocked by CORS:", origin);
         callback(new Error("Not allowed by CORS"));
       }
     },
+    credentials: true,
+  })
+);
+
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
+
+// ✅ Socket.io with same CORS
+const io = new Server(server, {
+  cors: {
+    origin: allowedOrigins,
     methods: ["GET", "POST"],
     credentials: true,
   },
 });
 
-// Middleware
-app.use(cors({ origin: process.env.CLIENT_URL || "*" }));
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
-
 // Test route
 app.get("/", (req, res) => {
-  res.json({ message: "Chat App API is running" });
+  mongoose
+  .connect(process.env.MONGO_URI)
+  .then(() => console.log("✅ MongoDB connected successfully"))
+  .catch((err) => {
+    // console.error("❌ MongoDB connection error:", err);
+     return res.json({ message: err.message });
+    process.exit(1);
+  });
+  // res.json({ message: "Chat App API is running" });
 });
 
 // API Routes
