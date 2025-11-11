@@ -17,17 +17,26 @@ import messageRoutes from "./routes/messageRoutes.js";
 const app = express();
 const server = http.createServer(app);
 
-// Allowed origins for Socket.io and CORS
+// ✅ Updated Allowed Origins for CORS + Socket.io
 const allowedOrigins = [
-  
-  process.env.CLIENT_URL // Netlify Live URL
+  process.env.CLIENT_URL,             // main Netlify site (from .env)
+  "https://privy001.netlify.app",     // permanent production domain
+  /\.netlify\.app$/                   // allow all Netlify preview builds
 ];
 
 // ✅ CORS for REST API
 app.use(
   cors({
     origin: function (origin, callback) {
-      if (!origin || allowedOrigins.includes(origin)) {
+      // allow server-to-server or Postman requests with no origin
+      if (!origin) return callback(null, true);
+
+      // check if origin is allowed
+      const isAllowed = allowedOrigins.some((o) =>
+        typeof o === "string" ? o === origin : o.test(origin)
+      );
+
+      if (isAllowed) {
         callback(null, true);
       } else {
         console.log("❌ Blocked by CORS:", origin);
@@ -35,13 +44,14 @@ app.use(
       }
     },
     credentials: true,
+    methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
   })
 );
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// ✅ Socket.io with same CORS
+// ✅ Socket.io with same CORS policy
 const io = new Server(server, {
   cors: {
     origin: allowedOrigins,
@@ -50,69 +60,57 @@ const io = new Server(server, {
   },
 });
 
-// Test route
+// ✅ Test route
 app.get("/", (req, res) => {
-  mongoose
-  .connect(process.env.MONGO_URI)
-  .then(() => console.log("✅ MongoDB connected successfully"))
-  .catch((err) => {
-    // console.error("❌ MongoDB connection error:", err);
-     return res.json({ message: err.message });
-    process.exit(1);
-  });
-  // res.json({ message: "Chat App API is running" });
+  res.json({ message: "✅ Privy backend running successfully!" });
 });
 
-// API Routes
+// ✅ API Routes
 app.use("/api/auth", authRoutes);
 app.use("/api/chats", chatRoutes);
 app.use("/api/messages", messageRoutes);
 
-// Store active users: { userId: socketId }
+// ✅ Active users map
 const activeUsers = new Map();
 
-// Socket.io connection handler
+// ✅ Socket.io connection handler
 io.on("connection", (socket) => {
   console.log("✅ User connected:", socket.id);
 
-  // User comes online
   socket.on("user-online", (userId) => {
     activeUsers.set(userId, socket.id);
     io.emit("user-status-change", { userId, status: "online" });
     console.log(`👤 User ${userId} is online`);
   });
 
-  // Join / leave chat rooms
   socket.on("join-chat", (chatId) => {
     socket.join(chatId);
     console.log(`💬 Socket ${socket.id} joined chat ${chatId}`);
   });
+
   socket.on("leave-chat", (chatId) => {
     socket.leave(chatId);
     console.log(`👋 Socket ${socket.id} left chat ${chatId}`);
   });
 
-  // Handle messages
   socket.on("send-message", ({ chatId, message }) => {
     if (!chatId || !message) return;
     io.in(chatId).emit("receive-message", { ...message, chatId });
     console.log(`📨 Message broadcast to chat ${chatId}`);
   });
 
-  // Typing indicators
   socket.on("typing", ({ chatId, userId, username }) => {
     socket.to(chatId).emit("user-typing", { userId, username });
   });
+
   socket.on("stop-typing", ({ chatId, userId }) => {
     socket.to(chatId).emit("user-stop-typing", { userId });
   });
 
-  // Mark messages as seen
   socket.on("mark-as-seen", ({ chatId, messageId, userId }) => {
     socket.to(chatId).emit("message-seen", { messageId, userId });
   });
 
-  // Disconnect
   socket.on("disconnect", () => {
     for (const [userId, socketId] of activeUsers.entries()) {
       if (socketId === socket.id) {
@@ -126,14 +124,15 @@ io.on("connection", (socket) => {
   });
 });
 
-// Make io accessible in routes if needed
+// ✅ Make io accessible in routes if needed
 app.set("io", io);
 
-// Connect to MongoDB
+// ✅ Connect to MongoDB
 if (!process.env.MONGO_URI) {
   console.error("❌ MONGO_URI is not defined in .env");
   process.exit(1);
 }
+
 mongoose
   .connect(process.env.MONGO_URI)
   .then(() => console.log("✅ MongoDB connected successfully"))
@@ -142,7 +141,7 @@ mongoose
     process.exit(1);
   });
 
-// Start server
+// ✅ Start server
 const PORT = process.env.PORT || 5000;
 server.listen(PORT, () => {
   console.log(`🚀 Server running on http://localhost:${PORT}`);
